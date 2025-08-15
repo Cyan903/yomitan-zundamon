@@ -1,0 +1,35 @@
+name: zundamon-yomitan
+
+services:
+    zundamon-yomitan-voicevox:
+        image: voicevox/voicevox_engine:cpu-ubuntu20.04-0.14.5
+        container_name: zundamon-yomitan-voicevox
+        restart: always
+        volumes:
+            - type: bind
+              source: ./config/voicevox.yaml
+              target: /opt/voicevox_engine/presets.yaml
+        networks:
+            - zundamon-yomitan
+
+    zundamon-yomitan:
+        image: cyan903/zundamon-yomitan:latest
+        container_name: zundamon-yomitan
+        restart: always
+        ports:
+            - 3000:3000
+        volumes:
+            - ./data:/app/data
+        environment:
+            VOX: "http://zundamon-yomitan-voicevox:50021"
+            API: abc,123
+            HOST: 0.0.0.0
+            PORT: 3000
+        networks:
+            - zundamon-yomitan
+        depends_on:
+            - zundamon-yomitan-voicevox
+
+networks:
+    zundamon-yomitan:
+
