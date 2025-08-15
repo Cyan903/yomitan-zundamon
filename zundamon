@@ -1,0 +1,133 @@
+#!/usr/bin/env node
+
+import "dotenv/config";
+
+import Fastify from "fastify";
+import consola from "consola";
+
+const { HOST, PORT, VOX, API } = process.env;
+
+const fastify = Fastify();
+const keys = String(API).split(",");
+
+// Auth
+async function auth(req, res) {
+    if (String(API) == "") return;
+
+    if (!keys.includes(req.query?.api)) {
+        return res.code(403).send({
+            code: 403,
+            message: "Invalid API key",
+        });
+    }
+}
+
+async function createPreset(text, preset = 1) {
+    const req = await fetch(
+        `${VOX}/audio_query_from_preset?preset_id=${preset}&text=${encodeURIComponent(text)}`,
+        { method: "POST" },
+    );
+
+    if (req.status != 200) {
+        consola.error(`[createPreset] ${req}`);
+        return false;
+    }
+
+    return await req.json();
+}
+
+async function createAudio(preset, speaker = 3) {
+    const req = await fetch(`${VOX}/synthesis?speaker=${speaker}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(preset),
+    });
+
+    if (req.status != 200) {
+        consola.error(`[createAudio] ${req}`);
+        return false;
+    }
+
+    return await req.blob();
+}
+
+// Routes
+fastify.get("/", (_, res) => {
+    return res.send({
+        code: 200,
+        message: "Ok",
+    });
+});
+
+fastify.get("/list", { onRequest: [auth] }, async (_, res) => {
+    const presets = await fetch(`${VOX}/presets`);
+    const speakers = await fetch(`${VOX}/speakers`);
+
+    if (presets.status == 200 && speakers.status == 200) {
+        return res.send({
+            code: 200,
+            presets: await presets.json(),
+            speakers: await speakers.json(),
+        });
+    }
+
+    consola.error("[/list]", presets, speakers);
+
+    return res.code(500).send({
+        code: 500,
+        message: "Internal server error",
+    });
+});
+
+fastify.get("/audio", { onRequest: [auth] }, async (req, res) => {
+    const { term, reading } = req.query;
+
+    if ([term, reading].includes(undefined)) {
+        return res.code(400).send({
+            code: 400,
+            message: "Bad request",
+        });
+    }
+
+    consola.info(`[/audio] ${term} (${reading})`);
+
+    // Fetch audio (if it exists)
+    // TODO: This
+
+    // Generate audio
+    try {
+        const preset = await createPreset(reading);
+
+        // prettier-ignore
+        if (!preset)
+            return res.code(500).send({ code: 500, message: "Could not generate preset" });
+
+        const audio = await createAudio(preset);
+
+        // prettier-ignore
+        if (!audio)
+            return res.code(500).send({ code: 500, message: "Could not generate audio" });
+
+        res.header("Content-Type", "audio/wav").send(
+            Buffer.from(await audio.arrayBuffer()),
+        );
+    } catch (e) {
+        consola.error("[/audio] failed to get audio");
+        consola.error(e);
+
+        return res.code(500).send({
+            code: 500,
+            message: "Internal server error",
+        });
+    }
+});
+
+// Listen
+fastify.listen({ port: PORT, host: HOST }, (err) => {
+    if (err) {
+        consola.fatal(err);
+        process.exit(1);
+    }
+
+    consola.info(`Running on ${HOST}:${PORT} (${VOX})`);
+});
