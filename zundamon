@@ -4,6 +4,7 @@ import "dotenv/config";
 
 import Fastify from "fastify";
 import consola from "consola";
+import fs from "fs";
 
 const { HOST, PORT, VOX, API } = process.env;
 
@@ -80,7 +81,7 @@ fastify.get("/list", { onRequest: [auth] }, async (_, res) => {
 });
 
 fastify.get("/audio", { onRequest: [auth] }, async (req, res) => {
-    const { term, reading } = req.query;
+    const { term, reading, preset, speaker } = req.query;
 
     if ([term, reading].includes(undefined)) {
         return res.code(400).send({
@@ -89,28 +90,34 @@ fastify.get("/audio", { onRequest: [auth] }, async (req, res) => {
         });
     }
 
-    consola.info(`[/audio] ${term} (${reading})`);
+    const pre = preset || 1;
+    const speak = speaker || 3;
+    const file = `data/${term}-${reading}-${pre}-${speak}.wav`;
 
     // Fetch audio (if it exists)
-    // TODO: This
+    if (fs.existsSync(file)) {
+        consola.info(`Loading -> ${term} (${reading})`);
+
+        return res
+            .header("Content-Type", "audio/wav")
+            .header("Content-Disposition", "inline")
+            .send(fs.createReadStream(file));
+    }
 
     // Generate audio
+    consola.info(`Generating -> ${term} (${reading})`);
+
     try {
-        const preset = await createPreset(reading);
+        const presets = await createPreset(reading, pre);
+        if (!presets) return res.code(500).send({ code: 500, message: "Couldn't generate preset" });
 
-        // prettier-ignore
-        if (!preset)
-            return res.code(500).send({ code: 500, message: "Could not generate preset" });
+        const audio = await createAudio(presets, speak);
+        if (!audio) return res.code(500).send({ code: 500, message: "Couldn't generate audio" });
 
-        const audio = await createAudio(preset);
+        const buffer = Buffer.from(await audio.arrayBuffer());
 
-        // prettier-ignore
-        if (!audio)
-            return res.code(500).send({ code: 500, message: "Could not generate audio" });
-
-        res.header("Content-Type", "audio/wav").send(
-            Buffer.from(await audio.arrayBuffer()),
-        );
+        fs.writeFileSync(file, buffer);
+        res.header("Content-Type", "audio/wav").send(buffer);
     } catch (e) {
         consola.error("[/audio] failed to get audio");
         consola.error(e);
